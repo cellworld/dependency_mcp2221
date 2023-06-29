@@ -1,8 +1,4 @@
 #include <mcp2221.h>
-#include <libmcp2221.h>
-#include <hidapi.h>
-#include <iostream>
-
 
 using namespace std;
 
@@ -38,8 +34,8 @@ namespace mcp2221 {
             path(path),
             pin_mode(MCP2221_GPIO_COUNT, NONE),
             adc_pins(MCP2221_GPIO_COUNT, 0),
-            need_pooling(false),
-            interrupt(NULL){
+            manage_interrupt(false)
+    {
         for (auto &pv:pin_values) pv = false;
     }
 
@@ -50,8 +46,10 @@ namespace mcp2221 {
             libmcp2221::mcp2221_exit();
             busy.unlock();
         }
-        need_pooling = false;
-        if (pooling_thread.joinable()) pooling_thread.join();
+        if (manage_interrupt){
+            manage_interrupt = false;
+            if (pooling_thread.joinable()) pooling_thread.join();
+        }
     }
 
     void Device::set_direction(GPIO pin, MODE direction) {
@@ -74,48 +72,12 @@ namespace mcp2221 {
             cerr << "Failed to open device at " << path << endl;
             exit(1);
         }
-//        busy.lock();
-//        auto res = mcp2221_reset(device);
-//        busy.unlock();
-//        if (res != libmcp2221::MCP2221_SUCCESS){
-//            cerr << "Failed to reset the device" << endl;
-//        }
         auto configuration = _config();
         busy.lock();
         libmcp2221::mcp2221_setGPIOConf(device, &configuration);
         libmcp2221::mcp2221_saveGPIOConf(device, &configuration);
         busy.unlock();
-        if (need_pooling){
-            pooling_thread = thread(&Device::_pooling_process, this);
-        }
-    }
-
-    void Device::_pooling_process(Device *device) {
-        vector<bool> pin_values(MCP2221_GPIO_COUNT);
-        device->get_pins();
-        for (size_t i=0;i<MCP2221_GPIO_COUNT;i++) pin_values[i] = device->pin_values[i];
-
-        while (device->need_pooling) {
-            int interrupt;
-            device->busy.lock();
-            auto res = mcp2221_readInterrupt(device->device, &interrupt);
-            device->busy.unlock();
-            if(res ==libmcp2221::MCP2221_SUCCESS) {
-                if (interrupt && device->interrupt) {
-                    device->busy.lock();
-                    res = mcp2221_clearInterrupt(device->device);
-                    device->busy.unlock();
-                    if (device->interrupt) device->interrupt();
-                    if (res != libmcp2221::MCP2221_SUCCESS) {
-                        cerr << "failed to clear interrupt flag" << endl;
-                    }
-                }
-            } else {
-                cerr << "failed to retrieve interrupt state" << endl;
-            }
-            this_thread::sleep_for(500us);
-        }
-    }
+     }
 
     libmcp2221::mcp2221_gpioconfset_t Device::_config() {
         int gpio_in = 0;
@@ -141,7 +103,7 @@ namespace mcp2221 {
                     gpio_adc |= gpio;
                     break;
                 case INTERRUPT:
-                    need_pooling = true;
+                    manage_interrupt = true;
                     gpio_int |= gpio;
                     break;
                 case NONE:
@@ -198,19 +160,6 @@ namespace mcp2221 {
     bool Device::get_pin(GPIO pin) {
         get_pins();
         return pin_values[pin];
-    }
-
-    void Device::set_interrupt(TRIGGER trigger, void (*p_interrupt)()) {
-        libmcp2221::mcp2221_int_trig_t t;
-        if (trigger == RISING){
-            t = libmcp2221::MCP2221_INT_TRIG_RISING;
-        } else {
-            t = libmcp2221::MCP2221_INT_TRIG_FALLING;
-        }
-        busy.lock();
-        mcp2221_setInterrupt(device, t, 1);
-        busy.unlock();
-        interrupt = p_interrupt;
     }
 
     int Device::get_adc(GPIO pin) {
