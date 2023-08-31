@@ -74,7 +74,7 @@ target_include_directories(mcp2221
 ### TESTS
 ###
 install_git_dependency( Catch
-        https://github.com/germanespinosa/catch
+        https://github.com/cellworld/dependency_catch
         ADD_SUBDIRECTORY)
 
 add_catch_test( basic_test
